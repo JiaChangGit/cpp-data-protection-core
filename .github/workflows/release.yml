@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, test, package, and release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
+      - name: Build and test
+        env:
+          CMAKE_GENERATOR: Ninja
+          CMAKE_BUILD_TYPE: Release
+        run: ./scripts/test.sh
+      - name: Package Linux x86_64 artifacts
+        run: |
+          set -euo pipefail
+          rm -rf release-staging
+          mkdir -p release-staging/bin
+          cp build/bin/backupctl release-staging/bin/
+          cp build/bin/backup-client release-staging/bin/
+          cp build/bin/backup-server release-staging/bin/
+          cp build/bin/backup-bench release-staging/bin/
+          cp README.md release-staging/
+          cp -R docs release-staging/docs
+          tar -czf cpp-data-protection-core-linux-x86_64.tar.gz -C release-staging .
+          sha256sum cpp-data-protection-core-linux-x86_64.tar.gz > cpp-data-protection-core-linux-x86_64.sha256
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            cpp-data-protection-core-linux-x86_64.tar.gz
+            cpp-data-protection-core-linux-x86_64.sha256

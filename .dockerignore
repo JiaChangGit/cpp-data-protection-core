@@ -1,0 +1,16 @@
+.git
+build
+build-*
+cmake-build-*
+.vscode
+.idea
+*.o
+*.a
+*.so
+*.log
+tmp
+repo
+server_repo
+restore
+test-output
+.DS_Store

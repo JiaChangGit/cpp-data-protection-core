@@ -1,0 +1,66 @@
+name: cpp-data-protection-core
+
+services:
+  demo-runner:
+    image: cpp-data-protection-core:runtime
+    build:
+      context: .
+      target: runtime
+    ports:
+      - "${DPC_DEMO_PORT:-19090}:19090"
+    volumes:
+      - server-repo:/data/repo
+    command: |
+      bash -lc '
+        set -euo pipefail
+        rm -rf /data/repo/* /tmp/dpc-compose
+        mkdir -p /tmp/dpc-compose/source /tmp/dpc-compose/restore
+        printf "docker compose interrupted transfer demo\n" > /tmp/dpc-compose/source/readme.txt
+        dd if=/dev/zero of=/tmp/dpc-compose/source/large.bin bs=1024 count=900 status=none
+
+        backup-server --repo /data/repo --port 19090 --threads 4 >/tmp/dpc-compose/server.log 2>&1 &
+        server_pid=$$!
+        cleanup() {
+          kill "$${server_pid}" 2>/dev/null || true
+          wait "$${server_pid}" 2>/dev/null || true
+        }
+        trap cleanup EXIT
+
+        for i in $$(seq 1 100); do
+          if (echo >/dev/tcp/127.0.0.1/19090) >/dev/null 2>&1; then
+            break
+          fi
+          if ! kill -0 "$${server_pid}" 2>/dev/null; then
+            echo "server exited before becoming ready" >&2
+            cat /tmp/dpc-compose/server.log >&2 || true
+            exit 1
+          fi
+          sleep 0.05
+        done
+        if ! (echo >/dev/tcp/127.0.0.1/19090) >/dev/null 2>&1; then
+          echo "server did not become ready" >&2
+          cat /tmp/dpc-compose/server.log >&2 || true
+          exit 1
+        fi
+
+        backup-client upload --source /tmp/dpc-compose/source --server 127.0.0.1:19090 --session compose-normal
+        backupctl verify --repo /data/repo --version 1
+
+        set +e
+        backup-client upload --source /tmp/dpc-compose/source --server 127.0.0.1:19090 --session compose-interrupted --exit-after-chunks 10
+        rc=$$?
+        set -e
+        if [ "$${rc}" -eq 0 ]; then
+          echo "expected interrupted upload to exit non-zero" >&2
+          exit 1
+        fi
+
+        backup-client upload --source /tmp/dpc-compose/source --server 127.0.0.1:19090 --session compose-interrupted
+        backupctl verify --repo /data/repo --version 2
+        backupctl restore --repo /data/repo --version 2 --target /tmp/dpc-compose/restore
+        diff -r /tmp/dpc-compose/source /tmp/dpc-compose/restore
+        echo "docker compose client/server demo ok"
+      '
+
+volumes:
+  server-repo:

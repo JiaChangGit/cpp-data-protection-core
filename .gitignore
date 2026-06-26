@@ -1,0 +1,58 @@
+# Build outputs
+build/
+build-*/
+cmake-build-*/
+out/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+CTestTestfile.cmake
+Testing/
+install_manifest.txt
+_deps/
+
+# Compiled artifacts
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.out
+*.gcno
+*.gcda
+*.gcov
+
+# Backup / demo runtime data
+tmp/
+repo/
+server_repo/
+restore/
+test-output/
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+*~
+
+# IDE / editor
+# VS Code / Cursor
+.vscode/
+*.code-workspace
+.idea/
+*.user
+*.suo
+*.sln.docstates
+.cache/
+compile_commands.json
+
+# OS
+.DS_Store
+Thumbs.db

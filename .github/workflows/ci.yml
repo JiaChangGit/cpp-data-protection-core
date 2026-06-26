@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-and-test-gcc:
+    name: Build and unit test (GCC)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
+      - name: Configure and build
+        env:
+          CMAKE_GENERATOR: Ninja
+        run: ./scripts/build.sh
+      - name: Run unit tests
+        run: ctest --test-dir build --output-on-failure
+
+  build-and-test-clang:
+    name: Build and unit test (Clang)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang cmake ninja-build libssl-dev libzstd-dev libgtest-dev
+      - name: Configure and build
+        env:
+          CC: clang
+          CXX: clang++
+          CMAKE_GENERATOR: Ninja
+        run: ./scripts/build.sh
+      - name: Run unit tests
+        run: ctest --test-dir build --output-on-failure
+
+  integration-test:
+    name: Integration test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
+      - name: Build
+        env:
+          CMAKE_GENERATOR: Ninja
+        run: ./scripts/build.sh
+      - name: Run backup/restore integration test
+        run: ./tests/integration/backup_restore_verify_test.sh
+
+  fault-injection-test:
+    name: Fault injection test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
+      - name: Build
+        env:
+          CMAKE_GENERATOR: Ninja
+        run: ./scripts/build.sh
+      - name: Run crash recovery fault injection test
+        run: ./tests/fault_injection/crash_recovery_test.sh
+
+  security-malformed-test:
+    name: Security malformed input test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
+      - name: Build
+        env:
+          CMAKE_GENERATOR: Ninja
+        run: ./scripts/build.sh
+      - name: Run malformed input security test
+        run: ./tests/security/security_malformed_test.sh
+
+  benchmark-smoke:
+    name: Benchmark smoke test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
+      - name: Build
+        env:
+          CMAKE_GENERATOR: Ninja
+        run: ./scripts/build.sh
+      - name: Run benchmark correctness smoke test
+        env:
+          DPC_BENCH_SIZE: 8M
+        run: ./scripts/bench.sh
+
+  static-analysis:
+    name: Static analysis
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang clang-tidy cmake cppcheck ninja-build libssl-dev libzstd-dev libgtest-dev
+      - name: Configure for compile commands
+        env:
+          CC: clang
+          CXX: clang++
+          CMAKE_GENERATOR: Ninja
+        run: ./scripts/build.sh
+      - name: Run cppcheck
+        run: |
+          cppcheck --enable=warning --error-exitcode=1 --inline-suppr --suppress=missingIncludeSystem -I include src include
+      - name: Run clang-tidy scoped checks
+        run: |
+          clang-tidy -p build \
+            src/core/FixedChunker.cpp \
+            src/core/Compressor.cpp \
+            src/network/PacketCodec.cpp \
+            --checks='-*,bugprone-*,performance-*,modernize-use-nullptr'

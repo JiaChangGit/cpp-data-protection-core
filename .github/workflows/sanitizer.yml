@@ -1,0 +1,45 @@
+name: Sanitizers
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  asan-ubsan:
+    name: ASan and UBSan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
+      - name: Build and test with ASan/UBSan
+        env:
+          CMAKE_GENERATOR: Ninja
+          CMAKE_BUILD_TYPE: Debug
+          CMAKE_ARGS: -DDPC_ENABLE_ASAN=ON -DDPC_ENABLE_UBSAN=ON
+          DPC_BUILD_DIR: ${{ github.workspace }}/build-asan
+        run: ./scripts/test.sh
+
+  tsan:
+    name: TSan unit tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
+      - name: Build with TSan
+        env:
+          CMAKE_GENERATOR: Ninja
+          CMAKE_BUILD_TYPE: Debug
+          CMAKE_ARGS: -DDPC_ENABLE_TSAN=ON
+          DPC_BUILD_DIR: ${{ github.workspace }}/build-tsan
+        run: ./scripts/build.sh
+      - name: Run TSan unit tests
+        run: ctest --test-dir build-tsan --output-on-failure
