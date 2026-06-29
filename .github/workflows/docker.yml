@@ -1,5 +1,9 @@
 name: Docker
 
+# Docker workflow 分成三個層次：
+# 1. 建立 test image 並在容器內跑測試。
+# 2. 建立 runtime image 並跑 docker compose 示範流程。
+# 3. 只有在可信任事件下，才登入 GHCR 並推送 image。
 on:
   push:
     branches: [main]
@@ -7,57 +11,99 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# packages: write 只用於推送 GHCR image。
+# pull_request 仍會跑 build/test，但不會登入 registry，也不會推送 image。
 permissions:
   contents: read
   packages: write
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  LOCAL_TEST_IMAGE: cpp-data-protection-core:test
+  LOCAL_RUNTIME_IMAGE: cpp-data-protection-core:runtime
 
 jobs:
   docker-build-test-publish:
     name: Build, test, and optionally publish Docker image
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
       - name: Set image metadata
         id: image
         run: |
+          set -euo pipefail
+
+          # GHCR image path 必須是小寫；GitHub owner 可能包含大寫，所以先轉成小寫。
           owner_lc="${GITHUB_REPOSITORY_OWNER,,}"
           echo "name=ghcr.io/${owner_lc}/cpp-data-protection-core" >> "${GITHUB_OUTPUT}"
+
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
+
       - name: Build test image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           target: test
-          tags: cpp-data-protection-core:test
+          tags: ${{ env.LOCAL_TEST_IMAGE }}
+          # load: true 會把 buildx 產物載入 runner 本機 Docker image store。
+          # 後面的 docker run 才能直接使用這個 image。
           load: true
+
       - name: Run Docker test image
-        run: docker run --rm cpp-data-protection-core:test bash -lc './scripts/test.sh && ./scripts/demo_local_backup.sh && ./scripts/demo_crash_recovery.sh'
+        run: |
+          set -euo pipefail
+
+          # 在容器內跑 test 與 demo，可以確認 Dockerfile test stage 的依賴完整。
+          docker run --rm "${LOCAL_TEST_IMAGE}" bash -lc "./scripts/test.sh && ./scripts/demo_local_backup.sh && ./scripts/demo_crash_recovery.sh"
+
       - name: Build compose demo image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           target: runtime
-          tags: cpp-data-protection-core:runtime
+          tags: ${{ env.LOCAL_RUNTIME_IMAGE }}
           load: true
+
       - name: Run Docker Compose demo
-        run: ./scripts/docker_demo.sh
+        run: |
+          set -euo pipefail
+
+          # docker_demo.sh 通常會啟動多個服務，適合檢查 runtime image 與 compose 設定是否相容。
+          bash ./scripts/docker_demo.sh
+
       - name: Log in to GHCR
+        # PR 可能來自 fork，不應該使用寫入權限或 registry token。
+        # workflow_dispatch 保留手動發佈彈性；main push 則代表主線自動發佈。
         if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build and publish runtime image
-        uses: docker/build-push-action@v6
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+        uses: docker/build-push-action@v7
         with:
           context: .
           target: runtime
-          push: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') }}
+          push: true
           tags: |
             ${{ steps.image.outputs.name }}:latest
             ${{ steps.image.outputs.name }}:${{ github.sha }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.run_id }}

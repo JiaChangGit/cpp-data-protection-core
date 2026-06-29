@@ -1,29 +1,62 @@
 name: Release
 
+# 只有推送 v* tag 時才建立 GitHub Release。
+# 範例：git tag v1.0.0 && git push origin v1.0.0
 on:
   push:
     tags:
       - 'v*'
 
+concurrency:
+  # 同一個 tag 的 release 不應該同時跑兩份，避免資產重複上傳或互相覆蓋。
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+# 建立 GitHub Release 與上傳附件需要 contents: write。
 permissions:
   contents: write
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  COMMON_APT_PACKAGES: >-
+    build-essential
+    cmake
+    ninja-build
+    libssl-dev
+    libzstd-dev
+    libgtest-dev
+  RELEASE_ARCHIVE: cpp-data-protection-core-linux-x86_64.tar.gz
 
 jobs:
   release:
     name: Build, test, package, and release
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Install dependencies
+        uses: actions/checkout@v5
+
+      - name: Install build dependencies
         run: |
+          set -euo pipefail
+
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
-      - name: Build and test
+          sudo apt-get install -y --no-install-recommends ${COMMON_APT_PACKAGES}
+
+      - name: Build and test release configuration
         env:
           CMAKE_GENERATOR: Ninja
           CMAKE_BUILD_TYPE: Release
-        run: ./scripts/test.sh
+        run: |
+          set -euo pipefail
+
+          # Release 前先跑完整測試，避免把不可用的 binary 包進正式附件。
+          bash ./scripts/test.sh
+
       - name: Package Linux x86_64 artifacts
         run: |
           set -euo pipefail
@@ -31,19 +64,23 @@ jobs:
           rm -rf release-staging
           mkdir -p release-staging/bin
 
-          cp build/bin/backupctl release-staging/bin/
-          cp build/bin/backup-client release-staging/bin/
-          cp build/bin/backup-server release-staging/bin/
-          cp build/bin/backup-bench release-staging/bin/
+          # 明確列出要出貨的執行檔，避免 build 目錄裡的暫存檔被一起打包。
+          for binary in backupctl backup-client backup-server backup-bench; do
+            test -x "build/bin/${binary}"
+            cp "build/bin/${binary}" release-staging/bin/
+          done
 
+          # README 與 docs 一起打包，下載後不用回到 repository 也能看操作說明。
           cp README.md release-staging/
           cp -R docs release-staging/docs
 
-          tar -czf cpp-data-protection-core-linux-x86_64.tar.gz -C release-staging .
-          sha256sum cpp-data-protection-core-linux-x86_64.tar.gz > cpp-data-protection-core-linux-x86_64.sha256
+          tar -czf "${RELEASE_ARCHIVE}" -C release-staging .
+          sha256sum "${RELEASE_ARCHIVE}" > cpp-data-protection-core-linux-x86_64.sha256
+
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
+          # 由 GitHub 根據 commit 與 PR 自動整理 release notes。
           generate_release_notes: true
           files: |
             cpp-data-protection-core-linux-x86_64.tar.gz

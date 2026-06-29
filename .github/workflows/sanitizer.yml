@@ -1,5 +1,9 @@
 name: Sanitizers
 
+# Sanitizer workflow 專門抓執行期錯誤。
+# ASan：常見記憶體錯誤，例如 use-after-free、buffer overflow。
+# UBSan：未定義行為，例如 signed overflow、錯誤型別轉換。
+# TSan：資料競爭，例如多執行緒同時讀寫共享資料卻沒有同步。
 on:
   push:
     branches: [main]
@@ -7,44 +11,87 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
+env:
+  COMMON_APT_PACKAGES: >-
+    build-essential
+    cmake
+    ninja-build
+    libssl-dev
+    libzstd-dev
+    libgtest-dev
+
 jobs:
   asan-ubsan:
+    # ASan 與 UBSan 可以一起開，適合檢查大部分記憶體與未定義行為問題。
     name: ASan and UBSan
     runs-on: ubuntu-24.04
+    timeout-minutes: 40
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Install dependencies
+        uses: actions/checkout@v5
+
+      - name: Install build dependencies
         run: |
+          set -euo pipefail
+
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
+          sudo apt-get install -y --no-install-recommends ${COMMON_APT_PACKAGES}
+
       - name: Build and test with ASan/UBSan
         env:
           CMAKE_GENERATOR: Ninja
           CMAKE_BUILD_TYPE: Debug
+          # 這些 CMake option 需要專案的 CMakeLists.txt 支援。
+          # 如果 option 不存在，應由 CMake 設定階段直接暴露問題，而不是靜默忽略。
           CMAKE_ARGS: -DDPC_ENABLE_ASAN=ON -DDPC_ENABLE_UBSAN=ON
+          # 使用獨立 build directory，避免和一般 CI 的 build/ 互相污染。
           DPC_BUILD_DIR: ${{ github.workspace }}/build-asan
-        run: ./scripts/test.sh
+        run: |
+          set -euo pipefail
+          bash ./scripts/test.sh
 
   tsan:
+    # TSan 對執行速度與記憶體使用量較敏感，因此這裡只跑 unit tests。
+    # 若之後整合測試也需要檢查 thread safety，可再建立獨立 job。
     name: TSan unit tests
     runs-on: ubuntu-24.04
+    timeout-minutes: 40
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Install dependencies
+        uses: actions/checkout@v5
+
+      - name: Install build dependencies
         run: |
+          set -euo pipefail
+
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
+          sudo apt-get install -y --no-install-recommends ${COMMON_APT_PACKAGES}
+
       - name: Build with TSan
         env:
           CMAKE_GENERATOR: Ninja
           CMAKE_BUILD_TYPE: Debug
           CMAKE_ARGS: -DDPC_ENABLE_TSAN=ON
           DPC_BUILD_DIR: ${{ github.workspace }}/build-tsan
-        run: ./scripts/build.sh
+        run: |
+          set -euo pipefail
+          bash ./scripts/build.sh
+
       - name: Run TSan unit tests
-        run: ctest --test-dir build-tsan --output-on-failure
+        run: |
+          set -euo pipefail
+
+          ctest --test-dir build-tsan --output-on-failure

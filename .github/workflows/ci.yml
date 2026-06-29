@@ -1,5 +1,9 @@
 name: CI
 
+# 觸發條件：
+# 1. push 到 main：主線每次更新都要確認可建置、可測試。
+# 2. pull_request 到 main：合併前先擋掉編譯錯誤、測試失敗與明顯品質問題。
+# 3. workflow_dispatch：需要臨時重跑 CI 時，可從 GitHub Actions 頁面手動啟動。
 on:
   push:
     branches: [main]
@@ -7,137 +11,270 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# 同一個分支或同一個 PR 若連續 push，多餘的舊 CI 會自動取消。
+# 這可以節省 GitHub Actions 額度，也避免同時看多個過期結果造成誤判。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# 採最小權限原則：CI 只需要讀取原始碼，不需要寫入 repository。
 permissions:
   contents: read
 
-jobs:
-  build-and-test-gcc:
-    name: Build and unit test (GCC)
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
-      - name: Configure and build
-        env:
-          CMAKE_GENERATOR: Ninja
-        run: ./scripts/build.sh
-      - name: Run unit tests
-        run: ctest --test-dir build --output-on-failure
+# 預設 shell 固定為 bash，避免不同 runner 或指令環境造成行為差異。
+defaults:
+  run:
+    shell: bash
 
-  build-and-test-clang:
-    name: Build and unit test (Clang)
+# 多個 job 都會用到的套件集中管理。
+# build-essential：提供 gcc/g++/make 等基本編譯工具。
+# cmake：負責產生建置系統。
+# ninja-build：比傳統 Makefile 更適合 CI 的快速平行建置。
+# libssl-dev、libzstd-dev：專案若有加密、壓縮功能，連結時會需要標頭與函式庫。
+# libgtest-dev：提供 GoogleTest，供 C++ unit test 使用。
+env:
+  COMMON_APT_PACKAGES: >-
+    build-essential
+    cmake
+    ninja-build
+    libssl-dev
+    libzstd-dev
+    libgtest-dev
+
+jobs:
+  build-and-test:
+    # 同一份程式分別用 GCC 與 Clang 編譯。
+    # GCC 接近多數 Linux 發行版預設工具鏈；Clang 對警告與診斷通常更敏感。
+    name: Build and unit test (${{ matrix.compiler.name }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    strategy:
+      # 不因為某一個 compiler 失敗就中斷另一個 compiler。
+      # 這樣可以同時知道問題是否只出現在特定工具鏈。
+      fail-fast: false
+      matrix:
+        compiler:
+          - name: GCC
+            cc: gcc
+            cxx: g++
+            extra_packages: ""
+          - name: Clang
+            cc: clang
+            cxx: clang++
+            extra_packages: clang
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Install dependencies
+        uses: actions/checkout@v5
+
+      - name: Install build dependencies
         run: |
+          set -euo pipefail
+
           sudo apt-get update
-          sudo apt-get install -y build-essential clang cmake ninja-build libssl-dev libzstd-dev libgtest-dev
+
+          packages="${COMMON_APT_PACKAGES}"
+          if [[ -n "${{ matrix.compiler.extra_packages }}" ]]; then
+            packages="${packages} ${{ matrix.compiler.extra_packages }}"
+          fi
+
+          sudo apt-get install -y --no-install-recommends ${packages}
+
       - name: Configure and build
         env:
-          CC: clang
-          CXX: clang++
+          # CMake 會讀取 CC/CXX 來選擇 C/C++ compiler。
+          # CMAKE_GENERATOR=Ninja 會讓 ./scripts/build.sh 產生 Ninja build files。
+          CC: ${{ matrix.compiler.cc }}
+          CXX: ${{ matrix.compiler.cxx }}
           CMAKE_GENERATOR: Ninja
-        run: ./scripts/build.sh
+        run: |
+          set -euo pipefail
+          bash ./scripts/build.sh
+
       - name: Run unit tests
-        run: ctest --test-dir build --output-on-failure
+        run: |
+          set -euo pipefail
+
+          # --test-dir 指向 build 目錄，避免在 repository root 找不到 CTest metadata。
+          # --output-on-failure 會在測試失敗時印出 stdout/stderr，方便直接從 CI log 判斷原因。
+          ctest --test-dir build --output-on-failure
 
   integration-test:
+    # 整合測試會驗證多個元件一起跑時的行為，例如備份與還原流程是否真的能串起來。
     name: Integration test
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Install dependencies
+        uses: actions/checkout@v5
+
+      - name: Install build dependencies
         run: |
+          set -euo pipefail
+
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
-      - name: Build
+          sudo apt-get install -y --no-install-recommends ${COMMON_APT_PACKAGES}
+
+      - name: Build project
         env:
           CMAKE_GENERATOR: Ninja
-        run: ./scripts/build.sh
+        run: |
+          set -euo pipefail
+          bash ./scripts/build.sh
+
       - name: Run backup/restore integration test
-        run: ./tests/integration/backup_restore_verify_test.sh
+        run: |
+          set -euo pipefail
+          bash ./tests/integration/backup_restore_verify_test.sh
 
   fault-injection-test:
+    # 故障注入測試用來確認程式遇到 crash 或異常狀態時，恢復流程仍然符合預期。
+    # 這類測試通常比單元測試更接近實際使用情境。
     name: Fault injection test
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Install dependencies
+        uses: actions/checkout@v5
+
+      - name: Install build dependencies
         run: |
+          set -euo pipefail
+
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
-      - name: Build
+          sudo apt-get install -y --no-install-recommends ${COMMON_APT_PACKAGES}
+
+      - name: Build project
         env:
           CMAKE_GENERATOR: Ninja
-        run: ./scripts/build.sh
+        run: |
+          set -euo pipefail
+          bash ./scripts/build.sh
+
       - name: Run crash recovery fault injection test
-        run: ./tests/fault_injection/crash_recovery_test.sh
+        run: |
+          set -euo pipefail
+          bash ./tests/fault_injection/crash_recovery_test.sh
 
   security-malformed-test:
+    # malformed input 測試會餵入格式錯誤、長度不合理或內容異常的資料。
+    # 對備份、網路封包、檔案格式解析類專案來說，這可以提早發現 parser 邊界處理問題。
     name: Security malformed input test
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Install dependencies
+        uses: actions/checkout@v5
+
+      - name: Install build dependencies
         run: |
+          set -euo pipefail
+
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
-      - name: Build
+          sudo apt-get install -y --no-install-recommends ${COMMON_APT_PACKAGES}
+
+      - name: Build project
         env:
           CMAKE_GENERATOR: Ninja
-        run: ./scripts/build.sh
+        run: |
+          set -euo pipefail
+          bash ./scripts/build.sh
+
       - name: Run malformed input security test
-        run: ./tests/security/security_malformed_test.sh
+        run: |
+          set -euo pipefail
+          bash ./tests/security/security_malformed_test.sh
 
   benchmark-smoke:
+    # smoke test 只確認 benchmark 能啟動並完成基本正確性檢查。
+    # 這裡刻意使用較小資料量，避免 CI 因為效能波動而不穩定。
     name: Benchmark smoke test
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Install dependencies
+        uses: actions/checkout@v5
+
+      - name: Install build dependencies
         run: |
+          set -euo pipefail
+
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
-      - name: Build
+          sudo apt-get install -y --no-install-recommends ${COMMON_APT_PACKAGES}
+
+      - name: Build project
         env:
           CMAKE_GENERATOR: Ninja
-        run: ./scripts/build.sh
+        run: |
+          set -euo pipefail
+          bash ./scripts/build.sh
+
       - name: Run benchmark correctness smoke test
         env:
+          # 8M 足以跑過資料路徑，又不會讓 CI 花太多時間。
           DPC_BENCH_SIZE: 8M
-        run: ./scripts/bench.sh
+        run: |
+          set -euo pipefail
+          bash ./scripts/bench.sh
 
   static-analysis:
+    # 靜態分析不執行程式，而是從原始碼與 compile_commands.json 找出潛在缺陷。
+    # cppcheck 偏向一般 C/C++ 靜態規則；clang-tidy 可結合 Clang AST 做更精細的檢查。
     name: Static analysis
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Install dependencies
+        uses: actions/checkout@v5
+
+      - name: Install analysis dependencies
         run: |
+          set -euo pipefail
+
           sudo apt-get update
-          sudo apt-get install -y build-essential clang clang-tidy cmake cppcheck ninja-build libssl-dev libzstd-dev libgtest-dev
+          sudo apt-get install -y --no-install-recommends \
+            ${COMMON_APT_PACKAGES} \
+            clang \
+            clang-tidy \
+            cppcheck
+
       - name: Configure for compile commands
         env:
+          # clang-tidy 需要 compile_commands.json 才能知道每個 .cpp 的 include path 與編譯選項。
           CC: clang
           CXX: clang++
           CMAKE_GENERATOR: Ninja
-        run: ./scripts/build.sh
+        run: |
+          set -euo pipefail
+          bash ./scripts/build.sh
+
       - name: Run cppcheck
         run: |
-          cppcheck --enable=warning --error-exitcode=1 --inline-suppr --suppress=missingIncludeSystem -I include src include
+          set -euo pipefail
+
+          # --error-exitcode=1：只要 cppcheck 找到 warning 等級問題，就讓 CI 失敗。
+          # --inline-suppr：允許程式碼用 // cppcheck-suppress 精準壓制已確認可接受的警告。
+          # --suppress=missingIncludeSystem：避免系統標頭在 CI 環境中的解析差異造成雜訊。
+          cppcheck \
+            --enable=warning \
+            --error-exitcode=1 \
+            --inline-suppr \
+            --suppress=missingIncludeSystem \
+            -I include \
+            src include
+
       - name: Run clang-tidy scoped checks
         run: |
+          set -euo pipefail
+
+          # 先鎖定核心資料路徑檔案，避免一次掃全專案造成太多與本次修改無關的噪音。
+          # 之後若專案規模穩定，可再把檢查範圍擴大到更多 src/**/*.cpp。
           clang-tidy -p build \
             src/core/FixedChunker.cpp \
             src/core/Compressor.cpp \
