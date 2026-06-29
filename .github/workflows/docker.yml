@@ -1,9 +1,5 @@
 name: Docker
 
-# 觸發條件：
-# 1. push 到 main 分支時執行
-# 2. 對 main 分支發 PR 時執行
-# 3. 允許手動從 GitHub Actions 頁面執行
 on:
   push:
     branches: [main]
@@ -11,9 +7,6 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# GITHUB_TOKEN 權限設定：
-# contents: read    -> 允許 checkout repository 程式碼
-# packages: write  -> 允許把 Docker image 推送到 GHCR
 permissions:
   contents: read
   packages: write
@@ -22,28 +15,16 @@ jobs:
   docker-build-test-publish:
     name: Build, test, and optionally publish Docker image
     runs-on: ubuntu-24.04
-
     steps:
-      # 取得 repository 原始碼
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      # 設定 GHCR image 名稱
-      # GitHub Container Registry 的 image 路徑建議使用小寫 owner
-      # 範例：ghcr.io/jiachanggit/cpp-data-protection-core
       - name: Set image metadata
         id: image
         run: |
           owner_lc="${GITHUB_REPOSITORY_OWNER,,}"
           echo "name=ghcr.io/${owner_lc}/cpp-data-protection-core" >> "${GITHUB_OUTPUT}"
-
-      # 啟用 Docker Buildx
-      # Buildx 是 Docker BuildKit 的進階建置工具，docker/build-push-action 會用到
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      # 建置 test stage image
-      # 這裡不推送到 registry，只載入到本機 Docker engine 供後續 docker run 測試
       - name: Build test image
         uses: docker/build-push-action@v6
         with:
@@ -51,18 +32,8 @@ jobs:
           target: test
           tags: cpp-data-protection-core:test
           load: true
-
-      # 執行容器內測試
-      # 包含：
-      # 1. scripts/test.sh
-      # 2. scripts/demo_local_backup.sh
-      # 3. scripts/demo_crash_recovery.sh
       - name: Run Docker test image
         run: docker run --rm cpp-data-protection-core:test bash -lc './scripts/test.sh && ./scripts/demo_local_backup.sh && ./scripts/demo_crash_recovery.sh'
-
-      # 建置 runtime stage image
-      # 這個 image 是給 docker compose demo 使用
-      # 一樣只載入到本機，不直接推送
       - name: Build compose demo image
         uses: docker/build-push-action@v6
         with:
@@ -70,15 +41,8 @@ jobs:
           target: runtime
           tags: cpp-data-protection-core:runtime
           load: true
-
-      # 執行 Docker Compose demo
-      # 用來確認 runtime image 可以在 compose 環境中正常啟動與示範
       - name: Run Docker Compose demo
         run: ./scripts/docker_demo.sh
-
-      # 登入 GHCR
-      # 只有在非 PR，而且是 main 分支或手動執行時才登入
-      # PR 不推送 image，避免外部 PR 取得 packages write 權限
       - name: Log in to GHCR
         if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
         uses: docker/login-action@v3
@@ -86,18 +50,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      # 建置並選擇性推送 runtime image 到 GHCR
-      # push 條件：
-      # 1. 不是 pull_request
-      # 2. 是 main 分支，或是手動 workflow_dispatch 執行
-      #
-      # tags:
-      # latest        -> 給使用者方便 docker pull
-      # github.sha    -> 每次 commit 都有唯一 image tag，方便追蹤與 rollback
-      #
-      # labels:
-      # org.opencontainers.image.source -> 讓 GHCR 知道 image 對應到哪個 GitHub repository
       - name: Build and publish runtime image
         uses: docker/build-push-action@v6
         with:

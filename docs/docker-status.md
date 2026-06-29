@@ -1,8 +1,8 @@
-# Docker Status
+# Docker 配置摘要
 
-本文列出目前 Docker 交付狀態。詳細操作見 [docker.md](docker.md)。
+本文列出 repository 內的 Docker 檔案、image tags 與驗證指令。詳細操作見 [docker.md](docker.md)。
 
-## 已存在的檔案
+## 配置檔案
 
 - `Dockerfile`
 - `.dockerignore`
@@ -13,7 +13,7 @@
 - `scripts/docker_clean.sh`
 - `.github/workflows/docker.yml`
 
-## 已驗證流程
+## 驗證指令
 
 ```bash
 ./scripts/docker_build.sh

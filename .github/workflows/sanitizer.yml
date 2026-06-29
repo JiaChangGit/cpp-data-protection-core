@@ -1,9 +1,5 @@
 name: Sanitizers
 
-# 觸發條件：
-# 1. push 到 main 分支時執行
-# 2. 對 main 分支發 PR 時執行
-# 3. 允許從 GitHub Actions 頁面手動執行
 on:
   push:
     branches: [main]
@@ -11,8 +7,6 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# 權限設定：
-# 這個 workflow 只需要讀取 repository 程式碼，不需要寫入 package 或修改 repo
 permissions:
   contents: read
 
@@ -20,36 +14,13 @@ jobs:
   asan-ubsan:
     name: ASan and UBSan
     runs-on: ubuntu-24.04
-
     steps:
-      # 取得 repository 原始碼
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      # 安裝 C++ 專案建置與測試所需套件
-      #
-      # build-essential -> gcc/g++/make 等基本編譯工具
-      # cmake           -> CMake 建置系統
-      # ninja-build     -> Ninja generator，加快 CMake build
-      # libssl-dev      -> OpenSSL 開發套件
-      # libzstd-dev     -> Zstandard 壓縮函式庫
-      # libgtest-dev    -> GoogleTest 測試框架
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
-
-      # 使用 AddressSanitizer 與 UndefinedBehaviorSanitizer 建置並執行測試
-      #
-      # ASan:
-      #   偵測 heap overflow、stack overflow、use-after-free、memory leak 等記憶體錯誤
-      #
-      # UBSan:
-      #   偵測 undefined behavior，例如 signed integer overflow、
-      #   null pointer dereference、錯誤型別轉換等問題
-      #
-      # 注意：
-      #   ASan/UBSan 可以一起開，但通常不要跟 TSan 混在同一個 build
       - name: Build and test with ASan/UBSan
         env:
           CMAKE_GENERATOR: Ninja
@@ -61,27 +32,13 @@ jobs:
   tsan:
     name: TSan unit tests
     runs-on: ubuntu-24.04
-
     steps:
-      # 取得 repository 原始碼
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      # 安裝 C++ 專案建置與測試所需套件
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
-
-      # 使用 ThreadSanitizer 建置專案
-      #
-      # TSan:
-      #   偵測 data race、thread synchronization 錯誤、
-      #   mutex/lock 使用不當等多執行緒問題
-      #
-      # 注意：
-      #   TSan 通常不要和 ASan 一起開，因為 sanitizer runtime 可能衝突，
-      #   所以這裡獨立成另一個 job。
       - name: Build with TSan
         env:
           CMAKE_GENERATOR: Ninja
@@ -89,13 +46,5 @@ jobs:
           CMAKE_ARGS: -DDPC_ENABLE_TSAN=ON
           DPC_BUILD_DIR: ${{ github.workspace }}/build-tsan
         run: ./scripts/build.sh
-
-      # 執行 TSan build 產生的 unit tests
-      #
-      # --test-dir build-tsan:
-      #   指定 CTest 要從 build-tsan 目錄找測試
-      #
-      # --output-on-failure:
-      #   測試失敗時印出詳細 log，方便 debug CI
       - name: Run TSan unit tests
         run: ctest --test-dir build-tsan --output-on-failure

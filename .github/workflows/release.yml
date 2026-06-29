@@ -1,23 +1,10 @@
 name: Release
 
-# 觸發條件：
-# 只有當你 push Git tag，且 tag 名稱符合 v* 時才會執行。
-#
-# 範例：
-#   v1.0.0
-#   v1.1.0
-#   v2.0.0-beta
-#
-# 不會在一般 push main 時執行，避免每次 commit 都產生 GitHub Release。
 on:
   push:
     tags:
       - 'v*'
 
-# 權限設定：
-# contents: write
-#   允許 GitHub Actions 建立 GitHub Release，
-#   並上傳 release artifacts，例如 tar.gz 與 sha256 檔案。
 permissions:
   contents: write
 
@@ -25,62 +12,18 @@ jobs:
   release:
     name: Build, test, package, and release
     runs-on: ubuntu-24.04
-
     steps:
-      # 取得 repository 原始碼
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      # 安裝 C++ 專案建置與測試所需套件
-      #
-      # build-essential -> gcc/g++/make 等基本編譯工具
-      # cmake           -> CMake 建置系統
-      # ninja-build     -> Ninja generator，加快 CMake build
-      # libssl-dev      -> OpenSSL 開發套件
-      # libzstd-dev     -> Zstandard 壓縮函式庫
-      # libgtest-dev    -> GoogleTest 測試框架
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
-
-      # 使用 Release 模式建置並執行測試
-      #
-      # CMAKE_GENERATOR=Ninja:
-      #   指定 CMake 使用 Ninja 作為建置工具。
-      #
-      # CMAKE_BUILD_TYPE=Release:
-      #   使用 Release 編譯設定，通常會開啟最佳化，
-      #   比較接近實際發布給使用者的 binary。
-      #
-      # ./scripts/test.sh:
-      #   預期會完成 configure、build、unit test 等流程。
-      #   如果測試失敗，Release job 會直接中止，不會產生 GitHub Release。
       - name: Build and test
         env:
           CMAKE_GENERATOR: Ninja
           CMAKE_BUILD_TYPE: Release
         run: ./scripts/test.sh
-
-      # 打包 Linux x86_64 release artifacts
-      #
-      # release-staging:
-      #   暫存要放進 release tarball 的檔案。
-      #
-      # bin/:
-      #   放置編譯完成的 CLI / server / benchmark 執行檔。
-      #
-      # README.md:
-      #   放入主要使用說明，讓下載 release 的人不用回到 repo 也能閱讀基本資訊。
-      #
-      # docs/:
-      #   放入專案文件，方便面試展示與使用者離線閱讀。
-      #
-      # tar -czf:
-      #   建立 gzip 壓縮的 tarball。
-      #
-      # sha256sum:
-      #   產生 SHA-256 checksum，讓使用者可以驗證下載檔案是否完整、是否被竄改。
       - name: Package Linux x86_64 artifacts
         run: |
           set -euo pipefail
@@ -98,17 +41,6 @@ jobs:
 
           tar -czf cpp-data-protection-core-linux-x86_64.tar.gz -C release-staging .
           sha256sum cpp-data-protection-core-linux-x86_64.tar.gz > cpp-data-protection-core-linux-x86_64.sha256
-
-      # 建立 GitHub Release
-      #
-      # softprops/action-gh-release@v2:
-      #   會根據目前 push 的 Git tag 建立對應的 GitHub Release。
-      #
-      # generate_release_notes: true:
-      #   讓 GitHub 自動根據 commit / PR 產生 release notes。
-      #
-      # files:
-      #   上傳壓縮檔與 checksum 檔案到 GitHub Release。
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:

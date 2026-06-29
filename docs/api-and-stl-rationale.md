@@ -1,20 +1,20 @@
-# API And STL Rationale
+# 內部 API 與 STL 選擇
 
-本文件說明目前程式內部 API 如何串接，以及主要 STL 容器與 C++ 標準函式庫 API 的選用理由。這裡的 API 指 repository 內 C++ 類別與函式，不是 HTTP、REST 或 gRPC API。
+本文件說明目前程式內部 API 的呼叫關係，以及主要 STL 容器與 C++ 標準函式庫 API 的使用位置。這裡的 API 指 repository 內 C++ 類別與函式，不是 HTTP、REST 或 gRPC API。
 
-## Internal API Surface
+## 內部 API
 
 | Entry | Internal API | 主要責任 | 對應檔案 |
 | --- | --- | --- | --- |
 | `backupctl create` | `BackupEngine::create` | 掃描來源、切 chunk、寫 object、manifest、WAL、commit marker | `src/core/BackupEngine.cpp` |
 | `backupctl restore` | `RestoreEngine::restore` | 讀 manifest、讀 object、驗證 chunk/file checksum、寫回 target | `src/core/RestoreEngine.cpp` |
 | `backupctl verify` | `VerifyEngine::verify` | 讀 manifest、重新讀 object 並驗證 checksum | `src/core/VerifyEngine.cpp` |
-| `backupctl recover` | `RecoveryManager::recover` | 檢查 WAL、清理未完成狀態、重建 checkpoint | `src/metadata/RecoveryManager.cpp` |
+| `backupctl recover` | `RecoveryManager::recover` | 驗證 WAL、刪除 `repo/tmp` regular files、依 commit marker 重建 checkpoint | `src/metadata/RecoveryManager.cpp` |
 | `backup-client upload` | `BackupClient::upload` | 建立 chunk payload、查詢 session、補傳缺少 chunk、送 commit | `src/network/BackupClient.cpp` |
 | `backup-server` | `BackupServer::run` | TCP listen、thread pool dispatch、處理 packet、寫入 repo | `src/network/BackupServer.cpp` |
 | `backup-bench` | benchmark main | 產生 workload、跑 backup/verify/restore、比對 correctness、輸出 metrics | `src/bench/backup_bench_main.cpp` |
 
-## API Chain Diagram
+## API 呼叫關係
 
 ```mermaid
 flowchart TD
@@ -37,7 +37,7 @@ flowchart TD
 
 此圖對應 `include/dpc/core/*`、`include/dpc/metadata/*`、`include/dpc/network/*`。CLI 只負責參數解析與錯誤邊界，核心行為放在可測試的類別中。
 
-## Why Explicit PacketCodec API
+## PacketCodec wire encoding
 
 `PacketCodec` 使用 `encode` / `decode` 明確處理 big-endian 欄位，而不是把 C++ struct 直接寫入 socket。
 
@@ -49,14 +49,13 @@ flowchart TD
 
 對應檔案：`include/dpc/network/PacketCodec.hpp`、`src/network/PacketCodec.cpp`。
 
-## STL Container Selection
+## STL 容器
 
 | 使用位置 | 容器/API | 選用理由 | 可替代方案與取捨 |
 | --- | --- | --- | --- |
-| `ByteVector` | `std::vector<std::uint8_t>` | 連續記憶體，適合 SHA-256、zstd、packet payload、檔案讀寫 | `std::string` 不適合表示任意 binary；`std::span` 可作為未來 view，但 C++17 沒有標準 `std::span` |
+| `ByteVector` | `std::vector<std::uint8_t>` | 連續記憶體，適合 SHA-256、zstd、packet payload、檔案讀寫 | `std::string` 不適合表示任意 binary；C++17 沒有標準 `std::span`，目前 API 直接傳遞 owning vector |
 | `Manifest.files` | `std::vector<FileManifest>` | manifest 以順序讀寫，restore/verify 主要是線性掃描 | `std::map` 可查找但會改變資料模型；目前不需要隨機查找 |
 | `FileManifest.chunks` | `std::vector<ChunkRef>` | chunk 依檔案內順序處理，寫入與讀取都是線性 | linked list 會增加配置成本，且不利 cache locality |
-| `BackupEngine` duplicate tracking | `std::set<std::string>` | 判斷 unique hash，行為穩定且容易閱讀 | `std::unordered_set` 平均較快，可在大量 chunk benchmark 顯示瓶頸時再評估 |
 | `SessionIndex::received` | `std::map<std::uint64_t, std::string>` | 依 global chunk index 排序輸出 session status，方便 deterministic response | `std::unordered_map` 查找較快，但輸出順序不穩定 |
 | `SessionIndex::buildManifest` | `std::map<std::uint64_t, ReceivedChunkRecord>` | 檢查 `0..total_chunks-1` 是否完整，並依 global index 建 manifest | `std::vector<std::optional<...>>` 可更直接，但會引入較多初始化與 memory tradeoff |
 | file grouping | `std::map<std::string, FileManifest>` | 依 relative path 聚合 chunk，輸出 manifest 順序 deterministic | `unordered_map` 需要額外排序才能得到穩定輸出 |
@@ -66,7 +65,7 @@ flowchart TD
 | packet SHA | `std::array<std::uint8_t, 32>` | SHA-256 header 欄位固定 32 bytes，不需要 heap allocation | `std::vector` 可變長，反而需要額外長度檢查 |
 | filesystem paths | `std::filesystem::path` | C++17 標準路徑 API，支援組合、正規化與平台路徑語意 | 字串拼接容易漏掉 separator 與 traversal 檢查 |
 
-## Threading API Choice
+## Threading API
 
 ```mermaid
 flowchart LR
@@ -77,9 +76,9 @@ flowchart LR
     Handle --> Packet["PacketCodec::readPacket / writePacket"]
 ```
 
-目前 server 使用 blocking socket 加 bounded thread pool。這個設計對 demo 與小規模本機測試足夠，程式碼也比 epoll/reactor 簡單。限制是大量連線時 thread-per-connection 模型會遇到排程與資源上限；這點已列在 Future Work。
+Server 使用 blocking socket 加 bounded thread pool。每個活躍 connection 由一個 worker 執行，queue capacity 固定為 128；大量 idle connections 也會占用 worker。程式沒有 epoll/reactor、connection timeout 或 graceful shutdown command。
 
-## Storage API Choice
+## Storage API
 
 ```mermaid
 flowchart TD
@@ -92,9 +91,9 @@ flowchart TD
 
 object identity 使用 raw chunk SHA-256，而不是 compressed bytes hash。這樣 verify/restore 可以在解壓後重新計算 raw chunk hash，確認 object 內容沒有被修改成另一段壓縮資料。
 
-## Current Non-goals
+## 目前介面範圍
 
-- 不提供 REST/gRPC API。
-- 不把 metadata 改成 SQLite。
-- 不以 `unordered_*` 全面取代 ordered containers；只有 benchmark 顯示瓶頸時才值得改。
-- 不把 blocking TCP server 改成 epoll；這屬於 future work。
+- 對外介面只有 CLI 與自訂 TCP binary protocol，沒有 REST/gRPC API。
+- Metadata 使用一般檔案，沒有 SQLite 或其他 database backend。
+- Ordered containers 用於 deterministic serialization 與依 index 組裝資料；程式沒有另外維護全域索引服務。
+- TCP server 是 blocking I/O，沒有 event loop。

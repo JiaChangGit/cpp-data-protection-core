@@ -1,6 +1,6 @@
-# Concurrency Model
+# 並行模型
 
-目前 concurrency 實作集中在 `ThreadPool`、`BoundedQueue` 與 `BackupServer`。本機 backup/restore/verify 流程主要是單 process 內的同步流程；TCP server 會使用 worker pool 處理連線。
+並行處理集中在 `ThreadPool`、`BoundedQueue` 與 `BackupServer`。本機 backup、restore 與 verify 是同步流程；TCP server 使用 worker pool 處理連線。
 
 ## ThreadPool
 
@@ -11,7 +11,7 @@ BackupServer::BackupServer(std::filesystem::path repo, int port, std::size_t wor
     : repo_(std::move(repo)), port_(port), pool_(workers == 0 ? 1 : workers, 128) {}
 ```
 
-因此 `--threads 0` 會被轉成 1。queue capacity 目前固定為 128。
+因此 `--threads 0` 會被轉成 1。CLI 預設 worker 數為 4，queue capacity 固定為 128。
 
 ## BoundedQueue
 
@@ -19,7 +19,7 @@ BackupServer::BackupServer(std::filesystem::path repo, int port, std::size_t wor
 
 此行為由 `tests/unit/test_bounded_queue.cpp` 覆蓋。
 
-## BackupServer Flow
+## BackupServer 流程
 
 ```mermaid
 sequenceDiagram
@@ -39,13 +39,13 @@ sequenceDiagram
 
 `BackupServer::handleConnection` 使用 blocking `PacketCodec::readPacket`。每個 connection 由一個 worker 處理，connection 內的 packet 依序處理。
 
-## Shutdown
+## Process 終止
 
-`BackupServer::stop` 會設定 `stopped_` 並呼叫 `pool_.shutdown()`。目前 server CLI 透過 signal handler 呼叫 `stop`。demo script 會用 `kill` 停止背景 server process。
+`BackupServer::stop` 會設定 `stopped_` 並呼叫 `pool_.shutdown()`，但 `backup_server_main.cpp` 沒有註冊 signal handler，也沒有其他程式路徑呼叫 `stop`。Demo scripts 以 `kill` 終止整個背景 process；前景執行可用 `Ctrl+C` 觸發作業系統的預設 process termination。
 
 ## 目前限制
 
 - 沒有 epoll 或 non-blocking event loop。
 - 一個活躍 connection 會佔用一個 worker。
-- 沒有 per-client authentication 或 rate limit。
-- Server process 的長時間壓力測試尚未納入 CI。
+- Queue 滿時 `accept` loop 會在 `ThreadPool::submit` 內等待可用容量。
+- 沒有 graceful shutdown command、per-client authentication、connection timeout 或 rate limit。

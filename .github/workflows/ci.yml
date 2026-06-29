@@ -1,9 +1,5 @@
 name: CI
 
-# 觸發條件：
-# 1. push 到 main 分支時執行
-# 2. 對 main 分支發 PR 時執行
-# 3. 允許從 GitHub Actions 頁面手動執行
 on:
   push:
     branches: [main]
@@ -11,8 +7,6 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# 權限設定：
-# 這個 workflow 只需要讀取 repository 程式碼，不需要寫入 package 或修改 repository
 permissions:
   contents: read
 
@@ -20,172 +14,104 @@ jobs:
   build-and-test-gcc:
     name: Build and unit test (GCC)
     runs-on: ubuntu-24.04
-
     steps:
-      # 取得 repository 原始碼
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      # 安裝 GCC 建置、CMake、Ninja、OpenSSL、Zstd、GoogleTest 等依賴
-      #
-      # build-essential -> gcc/g++/make 等基本編譯工具
-      # cmake           -> CMake 建置系統
-      # ninja-build     -> Ninja generator，加快 CMake build
-      # libssl-dev      -> OpenSSL 開發套件
-      # libzstd-dev     -> Zstandard 壓縮函式庫
-      # libgtest-dev    -> GoogleTest 測試框架
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
-
-      # 使用 GCC 預設編譯器進行 configure 與 build
-      # CMAKE_GENERATOR=Ninja 會讓 scripts/build.sh 使用 Ninja 建置
       - name: Configure and build
         env:
           CMAKE_GENERATOR: Ninja
         run: ./scripts/build.sh
-
-      # 執行 CTest unit tests
-      # --test-dir build 指定測試目錄
-      # --output-on-failure 讓測試失敗時印出詳細 log，方便 debug
       - name: Run unit tests
         run: ctest --test-dir build --output-on-failure
 
   build-and-test-clang:
     name: Build and unit test (Clang)
     runs-on: ubuntu-24.04
-
     steps:
-      # 取得 repository 原始碼
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      # 安裝 Clang 與專案建置依賴
-      # 這個 job 用來確認程式碼不只可以被 GCC 編譯，也能被 Clang 編譯
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential clang cmake ninja-build libssl-dev libzstd-dev libgtest-dev
-
-      # 指定 CC=clang、CXX=clang++，讓 CMake 使用 Clang toolchain
       - name: Configure and build
         env:
           CC: clang
           CXX: clang++
           CMAKE_GENERATOR: Ninja
         run: ./scripts/build.sh
-
-      # 執行 Clang build 產出的 unit tests
       - name: Run unit tests
         run: ctest --test-dir build --output-on-failure
 
   integration-test:
     name: Integration test
     runs-on: ubuntu-24.04
-
     steps:
-      # 取得 repository 原始碼
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      # 安裝 integration test 所需依賴
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
-
-      # 建置專案，產生後續 integration test 需要的執行檔
       - name: Build
         env:
           CMAKE_GENERATOR: Ninja
         run: ./scripts/build.sh
-
-      # 執行 backup / restore 整合測試
-      # 主要驗證真實流程中的備份、還原、資料一致性是否正確
       - name: Run backup/restore integration test
         run: ./tests/integration/backup_restore_verify_test.sh
 
   fault-injection-test:
     name: Fault injection test
     runs-on: ubuntu-24.04
-
     steps:
-      # 取得 repository 原始碼
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      # 安裝 fault injection test 所需依賴
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
-
-      # 建置專案
       - name: Build
         env:
           CMAKE_GENERATOR: Ninja
         run: ./scripts/build.sh
-
-      # 執行 crash recovery fault injection test
-      # 用來驗證系統在模擬崩潰、中斷、部分寫入等異常情境後是否能正確恢復
       - name: Run crash recovery fault injection test
         run: ./tests/fault_injection/crash_recovery_test.sh
 
   security-malformed-test:
     name: Security malformed input test
     runs-on: ubuntu-24.04
-
     steps:
-      # 取得 repository 原始碼
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      # 安裝 security test 所需依賴
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
-
-      # 建置專案
       - name: Build
         env:
           CMAKE_GENERATOR: Ninja
         run: ./scripts/build.sh
-
-      # 執行 malformed input security test
-      # 用來驗證程式面對錯誤格式、損壞封包、異常輸入時不會 crash 或產生未定義行為
       - name: Run malformed input security test
         run: ./tests/security/security_malformed_test.sh
 
   benchmark-smoke:
     name: Benchmark smoke test
     runs-on: ubuntu-24.04
-
     steps:
-      # 取得 repository 原始碼
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      # 安裝 benchmark smoke test 所需依賴
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
-
-      # 建置專案
       - name: Build
         env:
           CMAKE_GENERATOR: Ninja
         run: ./scripts/build.sh
-
-      # 執行 benchmark correctness smoke test
-      #
-      # 這裡不是完整效能壓測，而是 smoke test：
-      # 目標是確認 benchmark 可以正常執行，且基本輸出與流程正確。
-      #
-      # DPC_BENCH_SIZE=8M:
-      # 使用較小資料量，避免 CI 時間過長。
       - name: Run benchmark correctness smoke test
         env:
           DPC_BENCH_SIZE: 8M
@@ -194,61 +120,22 @@ jobs:
   static-analysis:
     name: Static analysis
     runs-on: ubuntu-24.04
-
     steps:
-      # 取得 repository 原始碼
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      # 安裝靜態分析工具與建置依賴
-      #
-      # clang       -> Clang 編譯器
-      # clang-tidy  -> C++ 靜態分析與程式碼品質檢查工具
-      # cppcheck    -> C/C++ 靜態分析工具
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential clang clang-tidy cmake cppcheck ninja-build libssl-dev libzstd-dev libgtest-dev
-
-      # 使用 Clang configure/build
-      #
-      # 目的：
-      # 產生 compile_commands.json，讓 clang-tidy 可以知道每個 source file 的實際編譯參數。
       - name: Configure for compile commands
         env:
           CC: clang
           CXX: clang++
           CMAKE_GENERATOR: Ninja
         run: ./scripts/build.sh
-
-      # 執行 cppcheck
-      #
-      # --enable=warning:
-      #   啟用 warning 等級檢查
-      #
-      # --error-exitcode=1:
-      #   發現問題時讓 CI 失敗
-      #
-      # --inline-suppr:
-      #   允許在程式碼中使用 inline suppression
-      #
-      # --suppress=missingIncludeSystem:
-      #   忽略系統 header 找不到造成的雜訊
-      #
-      # -I include:
-      #   指定專案 header 搜尋路徑
       - name: Run cppcheck
         run: |
           cppcheck --enable=warning --error-exitcode=1 --inline-suppr --suppress=missingIncludeSystem -I include src include
-
-      # 執行 clang-tidy scoped checks
-      #
-      # 這裡只針對幾個核心檔案做檢查，避免整個專案一次開太多規則導致雜訊過多。
-      #
-      # --checks:
-      #   bugprone-*              -> 偵測容易造成 bug 的寫法
-      #   performance-*           -> 偵測可能影響效能的寫法
-      #   modernize-use-nullptr   -> 建議用 nullptr 取代 NULL 或 0
       - name: Run clang-tidy scoped checks
         run: |
           clang-tidy -p build \

@@ -1,26 +1,14 @@
 name: CodeQL
 
-# 觸發條件：
-# 1. push 到 main 分支時執行
-# 2. 對 main 分支發 PR 時執行
-# 3. 每週一固定執行一次排程掃描
-# 4. 允許從 GitHub Actions 頁面手動執行
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
-
-  # GitHub Actions 的 cron 使用 UTC 時區
-  # 這裡代表每週一 03:23 UTC 執行一次
   schedule:
     - cron: '23 3 * * 1'
-
   workflow_dispatch:
 
-# 權限設定：
-# contents: read          -> 允許 checkout repository 程式碼
-# security-events: write  -> 允許 CodeQL 上傳安全掃描結果到 GitHub Security 頁面
 permissions:
   contents: read
   security-events: write
@@ -29,52 +17,21 @@ jobs:
   analyze:
     name: CodeQL C/C++ analysis
     runs-on: ubuntu-24.04
-
     steps:
-      # 取得 repository 原始碼
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      # 安裝 C/C++ 專案建置所需套件
-      #
-      # build-essential -> gcc/g++/make 等基本編譯工具
-      # cmake           -> CMake 建置系統
-      # ninja-build     -> Ninja generator，加快 CMake build
-      # libssl-dev      -> OpenSSL 開發套件
-      # libzstd-dev     -> Zstandard 壓縮函式庫
-      # libgtest-dev    -> GoogleTest 測試框架
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build libssl-dev libzstd-dev libgtest-dev
-
-      # 初始化 CodeQL
-      #
-      # languages: c-cpp
-      #   指定分析 C/C++ 程式碼
-      #
-      # build-mode: manual
-      #   C/C++ 專案通常需要實際 build，CodeQL 才能知道編譯參數、
-      #   include path、macro、source file 關係等資訊。
-      #   因此這裡使用 manual build mode，後面會手動執行 ./scripts/build.sh。
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
           languages: c-cpp
           build-mode: manual
-
-      # 建置專案給 CodeQL 分析使用
-      #
-      # CodeQL 會觀察這個 build 過程，收集 C/C++ 編譯資料，
-      # 之後才能做比較準確的 data flow、control flow 與安全漏洞分析。
       - name: Build for CodeQL
         env:
           CMAKE_GENERATOR: Ninja
         run: ./scripts/build.sh
-
-      # 執行 CodeQL 分析並上傳結果
-      #
-      # 分析結果會出現在：
-      # Repository -> Security -> Code scanning
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3

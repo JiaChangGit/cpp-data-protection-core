@@ -36,7 +36,7 @@ build/bin/backup-bench --workload modified --base-size 64M --chunking cdc
 | `large-file` | 產生單一大檔，觀察 sequential chunking、compression、verify、restore throughput |
 | `small-files` | 產生多個小檔，觀察 file scanning、manifest metadata 與 per-file overhead |
 | `duplicated` | 產生兩個內容 pattern 相同的檔案，觀察 chunk-level dedup |
-| `modified` | 產生 base 與 modified 檔案，適合比較 fixed-size 與 simplified CDC 的 chunk boundary 行為 |
+| `modified` | 產生 `base.bin`（seed 11）與較大 1% 的 `modified.bin`（seed 12）；可比較兩種 chunking 在此 synthetic input 的輸出，但不是版本間增量備份測試 |
 
 ## Correctness Flow
 
@@ -90,11 +90,11 @@ Metric 定義：
 | `verify throughput MB/s` | input MiB / verify elapsed seconds |
 | `file count` | manifest 中的檔案數 |
 | `chunk count` | chunk reference 數 |
-| `unique chunk count` | 實際 unique chunk 數 |
-| `duplicate chunk count` | duplicate chunk reference 數 |
+| `unique chunk count` | 此次 create 新寫入的 object 數；benchmark 使用全新 repository，因此等同該次資料的 unique object 數 |
+| `duplicate chunk count` | 此次 create 遇到既有 object 的 chunk reference 數 |
 | `elapsed time` | backup + verify + restore 秒數 |
 
-## Fixed-size vs CDC
+## Fixed-size 與 CDC 比較
 
 同一個 workload 可分別跑 fixed 與 cdc：
 
@@ -103,7 +103,7 @@ build/bin/backup-bench --workload modified --base-size 128M --chunking fixed
 build/bin/backup-bench --workload modified --base-size 128M --chunking cdc
 ```
 
-比較時應看同一台機器、同一份 binary、同一個 workload 下的：
+比較時應使用同一台機器、同一份 binary、同一個 workload，並檢查：
 
 - `dedup ratio`
 - `stored object size`
@@ -111,9 +111,9 @@ build/bin/backup-bench --workload modified --base-size 128M --chunking cdc
 - `chunk count`
 - `unique chunk count`
 
-不要把單次結果當作固定性能比例。OS page cache、CPU、storage、compiler、input size 都會影響數值。
+`modified` workload 不是對既有 repository 建立第二個版本，也沒有在同一份檔案中央插入資料；它不驗證跨版本增量變更的去重率。單次結果也不代表固定性能比例，OS page cache、CPU、storage、compiler、input size 都會影響數值。
 
-## Simplified CDC Limitation
+## CDC 限制
 
 目前 `ContentDefinedChunker` 使用簡化 rolling hash：
 
@@ -123,4 +123,4 @@ avg size = 64 KiB
 max size = 256 KiB
 ```
 
-它不是 Rabin fingerprint，也沒有針對 real-world backup workload 做調參。CDC 結果適合做本專案內的功能驗證與相對比較，不應被描述成通用最佳化結論。
+它不是 Rabin fingerprint，程式也沒有提供 CDC 參數選項或基準資料集。輸出只代表上述 synthetic workload 與目前執行環境。

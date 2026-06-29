@@ -1,8 +1,8 @@
-# CI/CD Status
+# CI/CD 配置摘要
 
-本文列出目前 CI/CD 交付狀態。詳細 workflow 說明見 [cicd.md](cicd.md)，release 說明見 [release.md](release.md)。
+本文列出 repository 內的 CI/CD workflows 與各自定義的驗證工作。詳細說明見 [cicd.md](cicd.md)，release 說明見 [release.md](release.md)。
 
-## 已存在的 Workflows
+## Workflows
 
 - `.github/workflows/ci.yml`
 - `.github/workflows/sanitizer.yml`
@@ -10,7 +10,7 @@
 - `.github/workflows/release.yml`
 - `.github/workflows/codeql.yml`
 
-## 已涵蓋的驗證
+## Workflow jobs
 
 - GCC build and unit tests
 - Clang build and unit tests

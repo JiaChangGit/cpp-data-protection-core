@@ -26,7 +26,7 @@ object、manifest、checkpoint 與 commit marker 都透過 tmp file、`fsync`、
 
 ## Commit Marker
 
-Manifest rename 完成後不代表 version 已可見。`backupctl list` 只列出同時有 manifest 與 commit marker 的 version。這讓 recovery 可以區分「manifest 已寫入但 commit 尚未完成」的狀態。
+Manifest rename 完成後不代表 version 已可見。`ManifestStore::listCommittedVersions` 依 commit marker 列出 version，`backupctl list` 隨後載入相同 version 的 manifest。沒有 commit marker 的 manifest 不會列出；只有 commit marker、缺少 manifest 時，載入會回報錯誤。
 
 對應檔案：
 

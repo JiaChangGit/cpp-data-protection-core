@@ -160,33 +160,6 @@ Push to `main` 會跑相同驗證，且 Docker workflow 可推送 GHCR image。
 
 Push `v*` tag 會觸發 release workflow。
 
-## Suggested Branch Protection
-
-在 `Settings -> Branches -> Branch protection rules` 對 `main` 建議設定：
-
-- Require a pull request before merging
-- Require status checks to pass before merging
-- Require branches to be up to date before merging
-- Require conversation resolution before merging
-
-建議 required checks：
-
-```text
-Build and unit test (GCC)
-Build and unit test (Clang)
-Integration test
-Fault injection test
-Security malformed input test
-Benchmark smoke test
-Static analysis
-ASan and UBSan
-TSan unit tests
-Build, test, and optionally publish Docker image
-CodeQL C/C++ analysis
-```
-
-若 CI 時間過長，可以先把 `TSan unit tests`、Docker workflow 或 CodeQL 設為非 required，但 release 前仍應手動確認它們通過。
-
 ## Release Flow
 
 發版前先在本機執行：
